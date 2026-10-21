@@ -1,0 +1,8 @@
+node_modules
+dist
+.DS_Store
+
+# 敏感文件（绝不提交）：Ed25519 私钥等
+# .env 为常规配置，可提交；.env.secret 存放私钥
+.env.secret
+keys/
