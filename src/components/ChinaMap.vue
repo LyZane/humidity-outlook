@@ -184,7 +184,7 @@ function focusCity(city) {
   const dom = chart.getDom()
   const W = dom.clientWidth
   const H = dom.clientHeight
-  const z0 = chart.getOption().geo[0].zoom || 1
+  const z0 = trackedZoom
   const c0 = chart.convertFromPixel({ geoIndex: 0 }, [W / 2, H / 2])
   const Z = Math.min(4, Math.max(FOCUS_ZOOM, z0))
 
@@ -205,22 +205,38 @@ function focusCity(city) {
 
   // 直接跳转（补间逐帧重绘大地图反而更慢）
   chart.setOption({ geo: { center: targetCenter, zoom: Z } }, { lazyUpdate: true })
+  trackedZoom = Z
 }
 
-// ---------- 自定义慢速滚轮缩放（以鼠标位置为锚点） ----------
-function zoomAt(pixel, factor) {
-  const g = chart.getOption().geo[0]
-  const z0 = g.zoom || 1
-  const z1 = Math.min(4, Math.max(1, z0 * factor))
-  if (Math.abs(z1 - z0) < 1e-4) return
+// ---------- 自定义滚轮缩放（以鼠标位置为锚点，每帧合并一次保证跟手） ----------
+let trackedZoom = 1.25 // 与初始视口一致；避免每次滚动都 getOption 深拷贝
+let wheelRaf = 0
+let pendingDelta = 0
+let pendingPixel = null
+
+function applyZoomAt(pixel, factor) {
   const dom = chart.getDom()
   const W = dom.clientWidth
   const H = dom.clientHeight
+  const z0 = trackedZoom
+  const z1 = Math.min(4, Math.max(1, z0 * factor))
+  if (Math.abs(z1 - z0) < 1e-4) return
   const k = z1 / z0
   // 反推目标中心：使鼠标处的地理点缩放后仍停留在鼠标位置
   const q = [pixel[0] + (W / 2 - pixel[0]) / k, pixel[1] + (H / 2 - pixel[1]) / k]
   const c1 = chart.convertFromPixel({ geoIndex: 0 }, q)
-  chart.setOption({ geo: { zoom: z1, center: c1 } }, { lazyUpdate: true })
+  chart.setOption({ geo: { zoom: z1, center: c1 } }) // 不用 lazyUpdate，立即渲染
+  trackedZoom = z1
+}
+
+function flushWheel() {
+  wheelRaf = 0
+  const dy = pendingDelta
+  const px = pendingPixel
+  pendingDelta = 0
+  pendingPixel = null
+  if (!dy || !px || !chart) return
+  applyZoomAt(px, Math.exp(-dy * 0.0012))
 }
 
 let onWheel = null
@@ -243,14 +259,16 @@ onMounted(async () => {
     else if (params.componentType === 'geo') city = props.cities.find((x) => x.province === params.name)
     if (city && city.now) emit('select', city)
   })
-  // 拦截滚轮（ECharts 默认缩放太快），每格滚轮约 15%
+  // 拦截滚轮（ECharts 默认缩放太快）；每格约 15%，同一帧内的多次滚动合并为一次渲染
   onWheel = (e) => {
     e.preventDefault()
     e.stopPropagation()
     if (!mapReady || !chart) return
     const rect = chart.getDom().getBoundingClientRect()
     const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY // 行模式归一化为像素
-    zoomAt([e.clientX - rect.left, e.clientY - rect.top], Math.exp(-dy * 0.0012))
+    pendingDelta += dy
+    pendingPixel = [e.clientX - rect.left, e.clientY - rect.top]
+    if (!wheelRaf) wheelRaf = requestAnimationFrame(flushWheel)
   }
   chartEl.value.addEventListener('wheel', onWheel, { passive: false, capture: true })
   if (!chinaGeo) {
@@ -275,6 +293,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (onWheel && chartEl.value) chartEl.value.removeEventListener('wheel', onWheel, { capture: true })
+  cancelAnimationFrame(wheelRaf)
   chart && chart.dispose()
   chart = null
 })
