@@ -11,7 +11,7 @@
       <label>
         <span>Ed25519 私钥（PKCS8 PEM 或 OpenSSH 格式）</span>
         <textarea v-model="pem" rows="5" spellcheck="false"
-          placeholder="-----BEGIN PRIVATE KEY-----&#10;MC4CAQAwBQYDK2VwBCIEIHUCoDi/...&#10;-----END PRIVATE KEY-----"></textarea>
+          placeholder="-----BEGIN PRIVATE KEY-----&#10;（粘贴 keys/qweather_ed25519_private.pem 的全部内容）&#10;-----END PRIVATE KEY-----"></textarea>
       </label>
       <div v-if="error" class="msg error">私钥无法解析：{{ error }}</div>
       <div v-else-if="pem.trim()" class="msg ok">✓ 私钥格式校验通过（Ed25519）</div>
