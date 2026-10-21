@@ -240,6 +240,11 @@ function flushWheel() {
 }
 
 let onWheel = null
+// 触摸板惯性识别：手指停止后 macOS 还会持续发送衰减滚轮事件（约1秒），
+// 若不截断，地图会在手停后继续缩放，产生"不跟手"的延迟感
+let wheelHistory = [] // 最近 7 次事件的 |deltaY|
+let gestureEnded = false
+let lastWheelAt = 0
 
 watch(
   () => props.selectedId,
@@ -259,13 +264,36 @@ onMounted(async () => {
     else if (params.componentType === 'geo') city = props.cities.find((x) => x.province === params.name)
     if (city && city.now) emit('select', city)
   })
-  // 拦截滚轮（ECharts 默认缩放太快）；每格约 15%，同一帧内的多次滚动合并为一次渲染
+  // 拦截滚轮（ECharts 默认缩放太快）；每格约 15%，同帧合并渲染，
+  // 并识别触摸板惯性尾段（连续 7 次单调衰减即判定手势结束），保证手停地图停
   onWheel = (e) => {
     e.preventDefault()
     e.stopPropagation()
     if (!mapReady || !chart) return
-    const rect = chart.getDom().getBoundingClientRect()
+    const now = performance.now()
+    if (now - lastWheelAt > 120) {
+      wheelHistory = []
+      gestureEnded = false // 间隔超过 120ms 视为新手势
+    }
+    lastWheelAt = now
+    if (gestureEnded) return
+
     const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY // 行模式归一化为像素
+    wheelHistory.push(Math.abs(dy))
+    if (wheelHistory.length > 7) wheelHistory.shift()
+    if (wheelHistory.length === 7) {
+      let decay = true
+      for (let i = 1; i < 7; i++) {
+        if (wheelHistory[i] >= wheelHistory[i - 1]) { decay = false; break }
+      }
+      if (decay) {
+        gestureEnded = true // 惯性尾段：丢弃，等下一次手势
+        wheelHistory = []
+        return
+      }
+    }
+
+    const rect = chart.getDom().getBoundingClientRect()
     pendingDelta += dy
     pendingPixel = [e.clientX - rect.left, e.clientY - rect.top]
     if (!wheelRaf) wheelRaf = requestAnimationFrame(flushWheel)
