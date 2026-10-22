@@ -260,10 +260,9 @@ onMounted(async () => {
     if (city && city.now) emit('select', city)
   })
   // 拦截滚轮（ECharts 默认缩放太快）；每格约 15%，同帧合并渲染，逐帧即时应用。
-  // 注意：不做"惯性尾段截断"——慢速触摸板推动的 delta 与惯性尾段模式重叠，
-  // 启发式误判会吞掉主动滚动手势（实测回归），宁可保留轻微惯性漂移也要保证跟手
+  // 页面本身不可滚动，无需 preventDefault——在 WKWebView 中非被动 preventDefault
+  // 会把滚轮事件变成同步往返，导致手势期间事件被暂存、手停后才批量到达（不跟手）
   onWheel = (e) => {
-    e.preventDefault()
     e.stopPropagation()
     if (!mapReady || !chart) return
     const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY // 行模式归一化为像素
@@ -272,7 +271,7 @@ onMounted(async () => {
     pendingPixel = [e.clientX - rect.left, e.clientY - rect.top]
     if (!wheelRaf) wheelRaf = requestAnimationFrame(flushWheel)
   }
-  chartEl.value.addEventListener('wheel', onWheel, { passive: false, capture: true })
+  chartEl.value.addEventListener('wheel', onWheel, { capture: true, passive: true })
   if (!chinaGeo) {
     // no-store：文件更新后避免浏览器缓存旧版地图数据
     const res = await fetch(`${import.meta.env.BASE_URL}china.json`, { cache: 'no-store' })
