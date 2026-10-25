@@ -30,7 +30,7 @@ import { GridComponent, TooltipComponent } from 'echarts/components'
 import { LineChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
 import { REGIONS } from '../data/regions'
-import { demandIndexForDay, demandLevelOf } from '../utils/marketing'
+import { demandIndexSeries, demandLevelOf } from '../utils/marketing'
 
 echarts.use([GridComponent, TooltipComponent, LineChart, CanvasRenderer])
 
@@ -80,19 +80,27 @@ const assembled = computed(() => {
   for (const region of REGIONS) {
     const members = props.cities.filter((c) => region.provinces.includes(c.province))
     if (!members.length) continue
-    const timelines = members.map((c) => cityTimeline(c.id)).filter((t) => t.length)
+    const timelines = members
+      .map((c) => {
+        const days = cityTimeline(c.id)
+        if (!days.length) return null
+        // 逐城需求指数序列（含供暖地板 + 干燥记忆），按日期索引
+        const idxMap = new Map(demandIndexSeries(c, days).map((s) => [s.date, s.index]))
+        return { days, idxMap }
+      })
+      .filter(Boolean)
     if (!timelines.length) continue
-    const len = Math.max(...timelines.map((t) => t.length))
+    const len = Math.max(...timelines.map((t) => t.days.length))
     const hum = []
     const idx = []
     const labels = []
     for (let i = 0; i < len; i++) {
       let hSum = 0, iSum = 0, n = 0
       for (const t of timelines) {
-        const d = t[i]
+        const d = t.days[i]
         if (!d) continue
         hSum += d.humidity
-        iSum += demandIndexForDay({ humidity: d.humidity })
+        iSum += t.idxMap.get(d.date) ?? 0
         n++
         if (!labels[i]) labels[i] = d.date
       }

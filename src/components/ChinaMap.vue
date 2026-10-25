@@ -23,7 +23,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { LabelLayout } from 'echarts/features'
 import { humidityColor, HUMIDITY_GRADIENT_CSS } from '../utils/humidityColor'
 import { codeEmoji } from '../utils/weatherCode'
-import { demandLevelOf, demandIndexForDay } from '../utils/marketing'
+import { demandLevelOf, humidityIndex } from '../utils/marketing'
 
 echarts.use([GeoComponent, TooltipComponent, ScatterChart, CanvasRenderer, LabelLayout])
 
@@ -33,6 +33,8 @@ const props = defineProps({
   selectedId: { type: String, default: '' },
   loading: { type: Boolean, default: false },
   loadedCount: { type: Number, default: 0 },
+  /** cityId -> 今日需求指数（序列值，App 统一计算） */
+  indexMap: { type: Object, default: () => ({}) },
 })
 const emit = defineEmits(['select'])
 
@@ -76,7 +78,6 @@ function tooltipHtml(c, extraTitle) {
 
 function regionStyles() {
   const selected = props.cities.find((c) => c.id === props.selectedId)
-  const month = new Date().getMonth() + 1
   return props.cities
     .filter((c) => c.now)
     .map((c) => {
@@ -89,7 +90,7 @@ function regionStyles() {
       }
       // 省名颜色 = 需求指数等级色（T1 红 / T2 黄 / T3 绿 / 暂缓 蓝）
       const levelColor = demandLevelOf(
-        demandIndexForDay({ humidity: c.now.humidity, province: c.province, month })
+        props.indexMap[c.id] ?? humidityIndex(c.now.humidity)
       ).color
       return {
         name: c.province,

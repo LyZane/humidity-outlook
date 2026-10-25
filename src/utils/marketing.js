@@ -1,6 +1,8 @@
-// 加湿器营销建议生成器：纯函数，由「实况 + 7 天预报 + 当前日期」动态推导
+// 加湿器营销建议生成器：纯函数，由「过去实测 + 实况 + 7 天预报 + 当前日期」动态推导
 // 数据依据：湿度区间需求指数调研（详见 README / 项目对话）
 //   <40% 刚需 100 / 40-50% 85 / 50-60% 65 / 60-70% 45 / 70-80% 25 / >80% 10
+
+import { isHeatingDate } from '../data/heating'
 
 // 集中供暖省级行政区（秦岭-淮河以北）
 const HEATING_REGIONS = new Set([
@@ -60,44 +62,87 @@ export function demandLevelOf(index) {
 }
 
 /**
- * 单日需求指数：纯湿度函数（季节/供暖因素不改变分数，仅在建议话术中体现）
- * @param p { humidity, ...其他字段兼容保留 }
+ * 需求指数序列（三层模型）。需求度量的是「多少人处于需要加湿的状态」（存量），
+ * 不是当日湿度的瞬时读数（流量），因此必须对整条时间线逐日传递：
+ *
+ *   第 1 层 原料分：当日湿度 → 体感曲线（humidityIndex，不变）
+ *   第 2 层 地板：供暖期室内外湿度脱钩（暖气一开室外再潮室内也干），指数不跌破地板。
+ *        法定集中供暖（城市日历）地板 45；连续低温触发的空调制热行为地板 30（可逆、弱于集中供暖）
+ *   第 3 层 记忆：非对称滤波——干燥/寒潮当天立即推高（当天有症状、当天开暖气），
+ *        回暖后按半衰期 3 天缓慢消退（供暖不因一天回暖关阀，体感与购买决策有惯性）
+ *
+ * @param city { id, province }
+ * @param days [{ date:'YYYY-MM-DD', humidity, tMin? }] 旧 -> 新（过去实测 + 未来预报）
+ * @returns [{ date, raw, index, heating: 'calendar'|'dynamic'|'none' }] 与输入逐项对齐
  */
-export function demandIndexForDay({ humidity }) {
-  return humidityIndex(humidity)
+export const HEATING_FLOOR = 45
+export const DYNAMIC_FLOOR = 30
+export const INDEX_HALF_LIFE_DAYS = 3
+const DECAY_PER_DAY = Math.pow(2, -1 / INDEX_HALF_LIFE_DAYS)
+const DYNAMIC_TMIN = 5
+const DYNAMIC_RUN_DAYS = 3
+
+export function demandIndexSeries(city, days) {
+  const out = []
+  let eff = null
+  let coldRun = 0
+  for (const d of days) {
+    if (!d || typeof d.humidity !== 'number') continue
+    // 连续低温计数：tMin 缺失时不推进也不打断
+    if (typeof d.tMin === 'number') coldRun = d.tMin <= DYNAMIC_TMIN ? coldRun + 1 : 0
+    const cal = isHeatingDate(city.id, d.date)
+    const dyn = !cal && coldRun >= DYNAMIC_RUN_DAYS
+    let raw = humidityIndex(d.humidity)
+    if (cal) raw = Math.max(raw, HEATING_FLOOR)
+    else if (dyn) raw = Math.max(raw, DYNAMIC_FLOOR)
+    eff = eff == null || raw >= eff ? raw : raw + (eff - raw) * DECAY_PER_DAY
+    out.push({ date: d.date, raw, index: Math.round(eff), heating: cal ? 'calendar' : dyn ? 'dynamic' : 'none' })
+  }
+  return out
+}
+
+function todayISO() {
+  const t = new Date()
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
 }
 
 /**
- * @param city  { province, now: { humidity, temp } }
- * @param daily [{ humidity, tMin, tMax }] 7 天预报（可能为空数组）
+ * @param city  { id, province, now: { humidity, temp } }
+ * @param daily [{ date, humidity, tMin, tMax }] 7 天预报（可能为空数组，含今天）
+ * @param past  [{ date, humidity, tMin }] 过去实测（旧 -> 新，不含今天），序列记忆的初值来源
  */
-export function buildMarketingAdvice(city, daily) {
+export function buildMarketingAdvice(city, daily, past = []) {
   const rhNow = city.now?.humidity ?? null
   if (rhNow == null) return null
 
   const rhList = daily.map((d) => d.humidity).filter((v) => typeof v === 'number')
   const rhAvg7 = rhList.length ? Math.round(rhList.reduce((s, v) => s + v, 0) / rhList.length) : rhNow
-  // 决策更看未来：预报权重 0.6
+  // 决策更看未来：预报权重 0.6（仅用于话术中的湿度分带描述）
   const effRh = rhList.length ? Math.round(rhAvg7 * 0.6 + rhNow * 0.4) : rhNow
 
   const month = new Date().getMonth() + 1
   const isHeating = HEATING_REGIONS.has(city.province)
-  const heatingSeason = [11, 12, 1, 2, 3].includes(month)
   const tMinWeek = daily.length ? Math.min(...daily.map((d) => d.tMin)) : null
 
-  // 指数 = 纯湿度函数（季节因素只影响话术，不影响分数）
-  const index = humidityIndex(effRh)
-  const boosts = []
+  // 时间线（旧 -> 新）：过去实测 + 未来预报；今日指数取序列中今天那一项
+  const todayStr = daily[0]?.date || todayISO()
+  const timeline = [
+    ...past,
+    ...(daily.length ? daily : [{ date: todayStr, humidity: rhNow, tMin: city.now?.temp }]),
+  ]
+  const series = demandIndexSeries(city, timeline)
+  const todayEntry = series.find((s) => s.date === todayStr) || series[series.length - 1] || { raw: humidityIndex(rhNow), index: humidityIndex(rhNow), heating: 'none' }
 
-  const level =
-    index >= 85 ? { label: 'T1 刚需', color: '#f87171' } :
-    index >= 60 ? { label: 'T2 潜力', color: '#fbbf24' } :
-    index >= 35 ? { label: 'T3 观察', color: '#a3e635' } :
-                  { label: '暂缓', color: '#60a5fa' }
+  const index = todayEntry.index
+  const boosts = []
+  const level = demandLevelOf(index)
 
   // 动态话术
   const tips = []
   tips.push(`当前湿度 ${rhNow}%，未来 7 天均值 ${rhAvg7}%（${bandLabel(effRh)}）`)
+  if (index - todayEntry.raw >= 12) {
+    tips.push(`干燥记忆生效：当日湿度仅对应指数 ${todayEntry.raw}，近几日的干燥余温把需求维持在 ${index}——短暂回暖不会立刻消灭需求`)
+  }
 
   if (effRh < 40) {
     tips.push('室外已低于 40% 健康线，属刚需市场：主推大容量无雾/纯净型，素材打"晨起咽干、儿童鼻血"场景')
@@ -109,10 +154,12 @@ export function buildMarketingAdvice(city, daily) {
     tips.push('室外偏湿，加湿需求弱：预算转投除湿机或恒湿净化二合一种草')
   }
 
-  if (isHeating && heatingSeason) {
-    tips.push('正值供暖季，室内湿度通常仅 18–30%，为全年转化最高峰：建议上调本省地域投放系数')
+  if (todayEntry.heating === 'calendar') {
+    tips.push('正值法定供暖期，室内湿度通常仅 18–30%，需求指数有供暖地板托底：为全年转化最高峰，建议上调本省地域投放系数')
+  } else if (todayEntry.heating === 'dynamic') {
+    tips.push(`连续 ${DYNAMIC_RUN_DAYS} 天日低温 ≤${DYNAMIC_TMIN}°C，制热设备使用率上升拉低室内湿度：需求地板已生效，提前 3–7 天加投`)
   } else if (isHeating && month === 10) {
-    tips.push('距集中供暖约 2–4 周，现在预热投放可抢占低价流量（双11 前北省销量常 +60%）')
+    tips.push('距集中供暖约 1–4 周，现在预热投放可抢占低价流量（双11 前北省销量常 +60%）')
   } else if (!isHeating && [12, 1, 2].includes(month) && rhAvg7 >= 65) {
     tips.push('湿冷无供暖 + 空调制热，室内仍会干燥：主打"空调房恒湿"场景与静音中容量款')
   }
@@ -126,9 +173,9 @@ export function buildMarketingAdvice(city, daily) {
     if (delta <= -8) tips.push(`未来一周湿度走低约 ${-delta} 点，需求上行：建议加预算、提前备货`)
     else if (delta >= 8) tips.push(`未来一周湿度回升约 ${delta} 点，转化将走弱：控制出价、收缩泛流量`)
   }
-  if (tMinWeek !== null && tMinWeek <= 5 && effRh < 60 && !(isHeating && heatingSeason)) {
+  if (tMinWeek !== null && tMinWeek <= 5 && effRh < 60 && todayEntry.heating === 'none') {
     tips.push(`寒潮将至（周最低 ${tMinWeek}°C），制热设备使用率上升会进一步拉低室内湿度：提前 3–7 天加投`)
   }
 
-  return { index, level, effRh, boosts, tips }
+  return { index, level, effRh, boosts, tips, series }
 }

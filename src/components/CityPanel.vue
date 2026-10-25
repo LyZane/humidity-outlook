@@ -88,7 +88,7 @@
             <div class="i-bar-track"><div class="i-bar" :style="{ width: dayIndex(d).index + '%', background: dayIndex(d).color }"></div></div>
           </div>
         </div>
-        <div class="fc-note">湿度为白天平均相对湿度 · 指数为当日湿度对应的需求指数（0–100）</div>
+        <div class="fc-note">湿度为白天平均相对湿度 · 指数含供暖地板与干燥记忆（半衰期 3 天，非当日湿度瞬时值）</div>
       </template>
     </div>
   </aside>
@@ -98,11 +98,13 @@
 import { computed } from 'vue'
 import { codeEmoji } from '../utils/weatherCode'
 import { humidityColor, comfortLevel, HUMIDITY_GRADIENT_CSS } from '../utils/humidityColor'
-import { buildMarketingAdvice, demandIndexForDay, demandLevelOf } from '../utils/marketing'
+import { buildMarketingAdvice, demandLevelOf, humidityIndex } from '../utils/marketing'
 
 const props = defineProps({
   city: { type: Object, required: true },
   daily: { type: Array, default: () => [] },
+  /** 过去实测（旧 -> 新，不含今天）：需求指数序列的记忆初值 */
+  past: { type: Array, default: () => [] },
   loadingDaily: { type: Boolean, default: false },
   dailyError: { type: String, default: '' },
 })
@@ -110,7 +112,9 @@ defineEmits(['close'])
 
 const gradientCss = HUMIDITY_GRADIENT_CSS
 const comfort = computed(() => comfortLevel(props.city.now?.humidity ?? 50))
-const advice = computed(() => buildMarketingAdvice(props.city, props.daily))
+const advice = computed(() => buildMarketingAdvice(props.city, props.daily, props.past))
+/** 逐日需求指数（advice 内已算好的序列），按日期索引 */
+const indexByDate = computed(() => new Map((advice.value?.series || []).map((s) => [s.date, s])))
 const observedAtText = computed(() => {
   const t = props.city.now?.observedAt
   if (!t) return '-'
@@ -137,9 +141,10 @@ function tempBarStyle(d) {
   return { left: left + '%', width: width + '%' }
 }
 
-/** 逐日需求指数（按当日湿度）+ 等级色 */
+/** 逐日需求指数（序列值：含地板与记忆；序列缺该日时退化为当日湿度值） */
 function dayIndex(d) {
-  const index = demandIndexForDay({ humidity: d.humidity })
+  const entry = indexByDate.value.get(d.date)
+  const index = entry ? entry.index : humidityIndex(d.humidity)
   return { index, color: demandLevelOf(index).color }
 }
 </script>

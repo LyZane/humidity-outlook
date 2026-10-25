@@ -32,6 +32,7 @@
       <div class="view-switch" role="tablist">
         <button :class="{ active: viewMode === 'map' }" @click="viewMode = 'map'">地图</button>
         <button :class="{ active: viewMode === 'trend' }" @click="viewMode = 'trend'">分区趋势</button>
+        <button :class="{ active: viewMode === 'calendar' }" @click="viewMode = 'calendar'">供暖日历</button>
       </div>
 
       <div class="actions">
@@ -57,25 +58,28 @@
           :selected-id="selected?.id || ''"
           :loading="loading"
           :loaded-count="loadedCount"
+          :index-map="indexMap"
           @select="onSelect"
         />
         <CityPanel
           v-if="selected"
           :city="selected"
           :daily="daily"
+          :past="past"
           :loading-daily="loadingDaily"
           :daily-error="dailyError"
           @close="selected = null"
         />
       </template>
       <RegionTrend
-        v-else
+        v-else-if="viewMode === 'trend'"
         :cities="cities"
         :daily-map="dailyMap"
         :past-map="pastMap"
         :loading="trendLoading"
         :loaded-count="trendLoadedCount"
       />
+      <HeatingCalendar v-else />
     </main>
 
     <footer class="foot">
@@ -93,11 +97,13 @@ import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import ChinaMap from './components/ChinaMap.vue'
 import CityPanel from './components/CityPanel.vue'
 import RegionTrend from './components/RegionTrend.vue'
+import HeatingCalendar from './components/HeatingCalendar.vue'
 import PrivateKeyDialog from './components/PrivateKeyDialog.vue'
 import { CITIES } from './data/cities'
 import { getCityNow, getCityDaily, getCityPastDays, hasRealConfig, initRuntimeKey, invalidateNowCache, pMap } from './api/qweather'
 import { demoNow, demoDaily } from './api/demo'
 import { humidityColor } from './utils/humidityColor'
+import { demandIndexSeries } from './utils/marketing'
 
 // 每个省级行政区一个代表城市（省会/首府，含港澳台）
 const CAPITALS = CITIES.filter((c) => c.isCapital)
@@ -119,8 +125,30 @@ const trendLoaded = ref(false)
 
 const selected = shallowRef(null)
 const daily = ref([])
+const past = ref([])
 const loadingDaily = ref(false)
 const dailyError = ref('')
+
+function todayStr() {
+  const t = new Date()
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * 地图省名用「今日需求指数」（序列值：过去 5 天实测 + 今日）。
+ * 趋势数据未加载时退化为「历史 + 实况」或仅实况（此时只保留供暖地板，无记忆效应）。
+ */
+const indexMap = computed(() => {
+  const map = {}
+  for (const c of cities.value) {
+    if (!c.now) continue
+    const pastDays = pastMap.value[c.id] || []
+    const today = dailyMap.value[c.id]?.[0] || { date: todayStr(), humidity: c.now.humidity, tMin: null }
+    const series = demandIndexSeries(c, [...pastDays, today])
+    if (series.length) map[c.id] = series[series.length - 1].index
+  }
+  return map
+})
 
 const withData = computed(() => cities.value.filter((c) => c.now))
 const driest = computed(() => [...withData.value].sort((a, b) => a.now.humidity - b.now.humidity)[0])
@@ -178,18 +206,28 @@ async function onSelect(city) {
   loadingDaily.value = true
   dailyError.value = ''
   daily.value = []
-  try {
+  past.value = []
+  const loadDaily = async () => {
     daily.value = isDemo.value ? demoDaily(selected.value) : await getCityDaily(selected.value)
-  } catch (e) {
-    dailyError.value = e.message
-  } finally {
-    loadingDaily.value = false
   }
+  // 过去 5 天实测：需求指数序列的记忆初值（24h 缓存；失败不阻塞面板展示）
+  const loadPast = async () => {
+    past.value = isDemo.value
+      ? demoDaily(selected.value, -5).map((d) => ({ date: d.date, humidity: d.humidity, tMin: d.tMin, tMax: d.tMax }))
+      : await getCityPastDays(selected.value)
+  }
+  await Promise.all([
+    loadDaily().catch((e) => { dailyError.value = e.message }),
+    loadPast().catch((e) => console.warn(`[面板] ${selected.value.name} 历史数据获取失败（${e?.message || e}），需求指数退化为无记忆模式`)),
+  ])
+  loadingDaily.value = false
 }
 
 function reload() {
   if (!isDemo.value) invalidateNowCache()
   selected.value = null
+  daily.value = []
+  past.value = []
   trendLoaded.value = false
   dailyMap.value = {}
   pastMap.value = {}
