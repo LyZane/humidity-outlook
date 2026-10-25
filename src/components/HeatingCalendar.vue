@@ -128,6 +128,15 @@ const nonHeatingCount = computed(() => {
   align-items: center;
   padding: 10px 16px;
   border-top: 1px solid rgba(148, 163, 184, 0.1);
+  transition: background 0.15s;
+}
+.cal-row:not(.header):hover {
+  background: rgba(148, 163, 184, 0.1);
+  box-shadow: inset 3px 0 0 #38bdf8;
+}
+.cal-row.heating:hover {
+  background: rgba(249, 115, 22, 0.12);
+  box-shadow: inset 3px 0 0 #fb923c;
 }
 .cal-row.header {
   border-top: none;
