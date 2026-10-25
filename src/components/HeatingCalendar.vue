@@ -11,7 +11,7 @@
     <div class="cal-table">
       <div class="cal-row header">
         <span class="c-city">城市</span>
-        <span class="c-span">法定采暖期（月轴：1 月 → 12 月）</span>
+        <span class="c-span">法定采暖期（10 月 → 次年 4 月）</span>
         <span class="c-status">当前状态</span>
       </div>
 
@@ -22,9 +22,11 @@
         </div>
         <div class="c-span">
           <div class="strip" :style="row.stripStyle">
-            <div class="today-mark" :style="{ left: todayPct + '%' }" :title="'今天 ' + todayLabel"></div>
+            <div v-if="todayPct !== null" class="today-mark" :style="{ left: todayPct + '%' }" :title="'今天 ' + todayLabel"></div>
           </div>
-          <div class="months"><span v-for="m in 12" :key="m">{{ m }}</span></div>
+          <div class="months">
+            <span v-for="(m, i) in AXIS_MONTHS" :key="m" :style="{ flexGrow: AXIS_MONTH_DAYS[i] }">{{ m }}</span>
+          </div>
           <div class="span-text">{{ row.spanText }} · {{ row.days }} 天</div>
         </div>
         <div class="c-status">
@@ -46,14 +48,35 @@
 <script setup>
 import { computed } from 'vue'
 import { CITIES } from '../data/cities'
-import { HEATING_CALENDAR, mdDoy, heatingDays, heatingStatus } from '../data/heating'
+import { HEATING_CALENDAR, heatingDays, heatingStatus } from '../data/heating'
+
+// 采暖年轴：10-01 → 次年 04-30（共 212 天，非闰年近似）。5–9 月不在轴上
+const AXIS_MONTHS = [10, 11, 12, 1, 2, 3, 4]
+const AXIS_MONTH_DAYS = [31, 30, 31, 31, 28, 31, 30]
+const AXIS_TOTAL = AXIS_MONTH_DAYS.reduce((s, d) => s + d, 0)
+const AXIS_STARTS = []
+{
+  let acc = 0
+  for (const d of AXIS_MONTH_DAYS) {
+    AXIS_STARTS.push(acc)
+    acc += d
+  }
+}
+
+/** 'MM-DD' -> 轴上百分比（0-100）；不在轴上（5-9 月）返回 null */
+function axisPct(md) {
+  const [m, d] = md.split('-').map(Number)
+  const mi = AXIS_MONTHS.indexOf(m)
+  if (mi < 0) return null
+  return ((AXIS_STARTS[mi] + d - 1) / AXIS_TOTAL) * 100
+}
 
 function todayISO() {
   const t = new Date()
   return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
 }
 const today = todayISO()
-const todayPct = Math.round((mdDoy(today.slice(5, 10)) / 365) * 1000) / 10
+const todayPct = axisPct(today.slice(5, 10))
 const todayLabel = `${Number(today.slice(5, 7))}/${Number(today.slice(8, 10))}`
 
 function mdText(md) {
@@ -66,14 +89,14 @@ const rows = computed(() =>
     .map(([id, cal]) => {
       const city = CITIES.find((c) => c.id === id) || { name: id, province: '' }
       const status = heatingStatus(id, today) || { state: 'before', days: 0 }
-      // 采暖期跨年：高亮 [年初..end] + [start..年末] 两段，色标按日序百分比
-      const s = (mdDoy(cal.start) / 365) * 100
-      const e = (mdDoy(cal.end) / 365) * 100
+      // 采暖期在采暖年轴上是单段连续区间 [start, end]
+      const s = axisPct(cal.start)
+      const e = axisPct(cal.end)
       const stripStyle = {
         background:
-          `linear-gradient(90deg, rgba(245,158,11,0.55) 0%, rgba(249,115,22,0.8) ${e}%,` +
-          ` rgba(148,163,184,0.12) ${e}%, rgba(148,163,184,0.12) ${s}%,` +
-          ` rgba(245,158,11,0.8) ${s}%, rgba(249,115,22,0.55) 100%)`,
+          `linear-gradient(90deg, rgba(148,163,184,0.12) 0%, rgba(148,163,184,0.12) ${s}%,` +
+          ` rgba(245,158,11,0.85) ${s}%, rgba(249,115,22,0.85) ${e}%,` +
+          ` rgba(148,163,184,0.12) ${e}%, rgba(148,163,184,0.12) 100%)`,
       }
       return {
         id,
@@ -91,7 +114,7 @@ const rows = computed(() =>
       }
     })
     // 按开栓日期排序：冬得越早越靠前
-    .sort((a, b) => mdDoy(HEATING_CALENDAR[a.id].start) - mdDoy(HEATING_CALENDAR[b.id].start) || a.name.localeCompare(b.name, 'zh'))
+    .sort((a, b) => axisPct(HEATING_CALENDAR[a.id].start) - axisPct(HEATING_CALENDAR[b.id].start) || a.name.localeCompare(b.name, 'zh'))
 )
 
 const nonHeatingCount = computed(() => {
@@ -111,11 +134,13 @@ const nonHeatingCount = computed(() => {
 .heating-calendar::-webkit-scrollbar { width: 6px; }
 .heating-calendar::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.35); border-radius: 3px; }
 
-.cal-head { margin-bottom: 14px; }
+.cal-head { max-width: 880px; margin: 0 auto 14px; }
 .cal-title { font-size: 15px; font-weight: 600; color: #f1f5f9; }
-.cal-sub { margin-top: 6px; font-size: 12px; line-height: 1.6; color: #94a3b8; max-width: 860px; }
+.cal-sub { margin-top: 6px; font-size: 12px; line-height: 1.6; color: #94a3b8; }
 
 .cal-table {
+  max-width: 880px;
+  margin: 0 auto;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 12px;
   background: rgba(13, 20, 36, 0.6);
@@ -123,10 +148,10 @@ const nonHeatingCount = computed(() => {
 }
 .cal-row {
   display: grid;
-  grid-template-columns: 130px minmax(320px, 1fr) 210px;
-  gap: 14px;
+  grid-template-columns: 108px minmax(260px, 1fr) 196px;
+  gap: 12px;
   align-items: center;
-  padding: 10px 16px;
+  padding: 10px 14px;
   border-top: 1px solid rgba(148, 163, 184, 0.1);
   transition: background 0.15s;
 }
@@ -196,11 +221,11 @@ const nonHeatingCount = computed(() => {
 }
 
 .cal-foot {
-  margin-top: 12px;
+  max-width: 880px;
+  margin: 12px auto 0;
   font-size: 11.5px;
   line-height: 1.6;
   color: #64748b;
-  max-width: 860px;
 }
 
 @media (max-width: 760px) {
