@@ -29,24 +29,25 @@
         </div>
       </div>
 
-      <div class="view-switch" role="tablist">
-        <button :class="{ active: viewMode === 'map' }" @click="viewMode = 'map'">地图</button>
-        <button :class="{ active: viewMode === 'trend' }" @click="viewMode = 'trend'">分区趋势</button>
-        <button :class="{ active: viewMode === 'calendar' }" @click="viewMode = 'calendar'">供暖日历</button>
+      <div class="view-switch" role="tablist" aria-label="主视图">
+        <button :class="{ active: viewMode === 'map' }" role="tab" :aria-selected="viewMode === 'map'" @click="viewMode = 'map'">地图</button>
+        <button :class="{ active: viewMode === 'trend' }" role="tab" :aria-selected="viewMode === 'trend'" @click="viewMode = 'trend'">分区趋势</button>
+        <button :class="{ active: viewMode === 'calendar' }" role="tab" :aria-selected="viewMode === 'calendar'" @click="viewMode = 'calendar'">供暖日历</button>
+        <button :class="{ active: viewMode === 'report' }" role="tab" :aria-selected="viewMode === 'report'" @click="viewMode = 'report'">需求研究</button>
       </div>
 
-      <div class="actions">
+      <div v-if="viewMode !== 'report'" class="actions">
         <button class="btn" :disabled="loading" @click="reload" title="重新获取数据">
           {{ loading ? '加载中…' : '↻ 刷新' }}
         </button>
       </div>
     </header>
 
-    <div v-if="isDemo" class="banner demo-banner">
+    <div v-if="viewMode !== 'report' && isDemo" class="banner demo-banner">
       当前展示的是<b>演示数据</b>（未配置私钥）。
       <button class="link" @click="showKeyDialog = true">填入和风天气私钥 →</button>
     </div>
-    <div v-else-if="error" class="banner error-banner">
+    <div v-else-if="viewMode !== 'report' && error" class="banner error-banner">
       真实数据获取失败：{{ error }}（请检查项目根目录 .env 与 .env.secret 配置）
       <button class="link" @click="reload">重试</button>
     </div>
@@ -79,10 +80,14 @@
         :loading="trendLoading"
         :loaded-count="trendLoadedCount"
       />
-      <HeatingCalendar v-else />
+      <HeatingCalendar v-else-if="viewMode === 'calendar'" />
+      <DemandReport v-else />
     </main>
 
-    <footer class="foot">
+    <footer v-if="viewMode === 'report'" class="foot">
+      公开行业资料 · 月度指数为规划估算，非逐月实销
+    </footer>
+    <footer v-else class="foot">
       数据来源：<a href="https://www.qweather.com" target="_blank" rel="noopener">和风天气</a>
       <template v-if="!isDemo">（实时数据由和风天气提供）</template>
       <template v-else>（演示模式，非真实数据）</template>
@@ -98,6 +103,7 @@ import ChinaMap from './components/ChinaMap.vue'
 import CityPanel from './components/CityPanel.vue'
 import RegionTrend from './components/RegionTrend.vue'
 import HeatingCalendar from './components/HeatingCalendar.vue'
+import DemandReport from './components/DemandReport.vue'
 import PrivateKeyDialog from './components/PrivateKeyDialog.vue'
 import { CITIES } from './data/cities'
 import { getCityNow, getCityDaily, getCityPastDays, hasRealConfig, initRuntimeKey, invalidateNowCache, pMap } from './api/qweather'
@@ -113,7 +119,7 @@ const loadedCount = ref(0)
 const updatedAt = ref('')
 const error = ref('')
 const isDemo = ref(!hasRealConfig())
-const viewMode = ref('map') // 'map' | 'trend'
+const viewMode = ref('map') // 'map' | 'trend' | 'calendar' | 'report'
 const showKeyDialog = ref(false)
 
 // 分区趋势：全量数据（cityId -> future daily[] / past[]）

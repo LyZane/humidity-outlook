@@ -101,6 +101,15 @@ body {
   background: #2563eb;
   color: #fff;
 }
+.view-switch button:focus-visible,
+.btn:focus-visible,
+.banner .link:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+@media (max-width: 640px) {
+  .view-switch button { min-height: 44px; }
+}
 .btn {
   background: rgba(148, 163, 184, 0.1);
   border: 1px solid rgba(148, 163, 184, 0.25);
@@ -157,4 +166,3 @@ body {
   border-top: 1px solid var(--line);
 }
 .foot a { color: #7dd3fc; text-decoration: none; }
-</style>
